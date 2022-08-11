@@ -25,15 +25,15 @@ import           Data.Aeson
 import           GHC.Num (encodeDoubleInteger)
 
 whitelist :: [AssetClass]
-whitelist = []
+whitelist = [AssetClass ("29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c6", "4d494e74"), AssetClass ("29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c6", "4d494e")]
 
 daSale :: CurrencySymbol -> Sale
 daSale cur =
   Sale {
-    saleTokenRef = AssetClass ("", ""),
+    saleTokenRef = AssetClass ("126b8676446c84a5cd6e3259223b16a2314c5676b88ae1c1f8579a8f", "744d454c44"),
     validToken = cur,
-    salePrice = 0,
-    maxTokens = 0 -- The maxTokens field isn't even used... Oops. :sweat_smile:
+    salePrice = 50000,
+    maxTokens = 250000
   }
 
 main :: IO ()

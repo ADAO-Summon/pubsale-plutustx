@@ -256,7 +256,8 @@ saleScript sale datum action ctx =
       saleInputs = getOutputsByAsset ownInputs (saleTokenRef sale)
       saleOutputs = getOutputsByAsset ownOutputs (saleTokenRef sale)
       requestInputsWithST = getOutputsByAsset requestInputs validAsset
-      validRequestInputs = filter twoAssets requestInputsWithST
+      twoAssetRequestInputs = filter twoAssets requestInputsWithST
+      validRequestInputs = filter (\o -> (valueOf (txOutValue o) adaSymbol adaToken) < (divide (maxTokens sale) (salePrice sale))) twoAssetRequestInputs
       requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
       noValidityTokensLeave = length requestTokenOutputs == 0
       saleInValues = getValuesFromOuts saleInputs
@@ -297,11 +298,15 @@ mkPolicy assets _ ctx =
       inputsWithAssets = whitelisted (txInfoInputs info) assets
       inputsWithToken = getInputsWithToken info ownPolicy
       outputsWithToken = getOutputsWithToken info ownPolicy
-  in (length inputsWithToken == 0) &&
-     inputsWithAssets &&
-     (length flattenedMint == 1) &&
-     (length outputsWithToken == 1) &&
-     correctTokenName (head flattenedMint) (head outputsWithToken)
+      (cs, tn, a) = head flattenedMint
+  in length flattenedMint == 1 && case a == -1 of
+    True  -> True
+    False -> case a == 1 of
+      False -> False
+      True  -> (length inputsWithToken == 0) &&
+               inputsWithAssets &&
+               (length outputsWithToken == 1) &&
+               correctTokenName (head flattenedMint) (head outputsWithToken)
 
 policy :: [AssetClass] -> Scripts.MintingPolicy
 policy assets = mkMintingPolicyScript $
