@@ -238,6 +238,28 @@ correctTokenName (cs, tn, a) o =
   let v = filter (\(cs', tn', a') -> cs' == cs && tn' == tn) (flattenValue (txOutValue o))
   in length v == 1
 
+{-# INLINABLE datumsAreEqualSale #-}
+datumsAreEqualSale :: TxInfo -> TxOut -> TxOut -> Bool -> (TxOut, Bool)
+datumsAreEqualSale info o o' b =
+  let md = getDatum' info o
+      md' = getDatum' info o'
+  in case md of
+    Just d -> case d of
+      SaleDatum p -> case md' of
+        Just d' -> case d' of
+          SaleDatum p' -> (o', p == p' && b)
+          _            -> (o', False)
+        _       -> (o', False)
+      _           -> (o', False)
+    _      -> (o', False)
+
+{-# INLINABLE onlySingleDatum #-}
+onlySingleDatum :: TxInfo -> [TxOut] -> [TxOut] -> Bool
+onlySingleDatum info ins outs =
+  let fullList = ins ++ outs
+      (_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
+  in result
+
 data Saleing
 instance Scripts.ValidatorTypes Saleing where
     type instance RedeemerType Saleing = SaleRedeemer
@@ -279,6 +301,7 @@ saleScript sale datum action ctx =
       SaleDatum _     -> False
     Batch   ->
       ((length saleInputs) == (length saleOutputs)) &&
+      onlySingleDatum info saleInputs saleOutputs &&
       ((length requestInputs) == (length validRequestInputs)) &&
       ((divide (saleOutToken - saleInToken) (salePrice sale)) <= (saleOutLovelace - saleInLovelace)) &&
       (saleOutLovelace - saleInLovelace) <= requestLovelace &&
