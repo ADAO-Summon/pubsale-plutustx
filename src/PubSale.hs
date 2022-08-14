@@ -132,10 +132,9 @@ getOwnAddress :: ScriptContext -> Address
 getOwnAddress ctx = 
   let ownInput = findOwnInput ctx
       hash = ownHash ctx
-      txInfo = scriptContextTxInfo ctx
   in case ownInput of
     Just txoInfo -> txOutAddress (txInInfoResolved txoInfo)
-    Nothing      -> scriptHashAddress hash
+    Nothing      -> scriptHashAddress hash -- TODO: In this case, we probably want to stop the script execution by throwing an exception as this shouldn't happen. Better yet, use `fromJust`
 
 -- Return the tokenName of the validator.
 {-# INLINABLE ownTokenName #-}
@@ -151,11 +150,11 @@ resolveAll ins = map txInInfoResolved ins
 
 {-# INLINABLE getInputsTo #-}
 getInputsTo :: TxInfo -> Address -> [TxOut]
-getInputsTo info address = map txInInfoResolved (filter (\a -> (txOutAddress $ txInInfoResolved a) == address) (txInfoInputs info))
+getInputsTo info address = map txInInfoResolved (filter (\a -> txOutAddress (txInInfoResolved a) == address) (txInfoInputs info))
 
 {-# INLINABLE getOutputsTo #-}
 getOutputsTo :: TxInfo -> Address -> [TxOut]
-getOutputsTo info address = filter (\a -> (txOutAddress a) == address) (txInfoOutputs info)
+getOutputsTo info address = filter (\a -> txOutAddress a == address) (txInfoOutputs info)
 
 {-# INLINABLE getOutputsByAsset #-}
 getOutputsByAsset :: [TxOut] -> AssetClass -> [TxOut]
@@ -275,8 +274,11 @@ datumsAreEqualSale info o o' b =
 onlySingleDatum :: TxInfo -> [TxOut] -> [TxOut] -> Bool
 onlySingleDatum info ins outs =
   let fullList = ins ++ outs
-      (_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
-  in result
+      --(_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
+      isTxOutTypeValid :: TxOut -> Bool
+      isTxOutTypeValid txOut = maybe False (\case SaleDatum _ -> True; _ -> False) (getDatum' info txOut)
+  in all isTxOutTypeValid fullList
+      && all (== head fullList) fullList
 
 data Saleing
 instance Scripts.ValidatorTypes Saleing where
