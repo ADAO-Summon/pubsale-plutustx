@@ -117,7 +117,6 @@ getOwnAddress :: ScriptContext -> Address
 getOwnAddress ctx = 
   let ownInput = findOwnInput ctx
       hash = ownHash ctx
-      txInfo = scriptContextTxInfo ctx
   in case ownInput of
     Just txoInfo -> txOutAddress (txInInfoResolved txoInfo)
     Nothing      -> scriptHashAddress hash
