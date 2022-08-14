@@ -135,7 +135,7 @@ resolveAll ins = map txInInfoResolved ins
 
 {-# INLINABLE getInputsTo #-}
 getInputsTo :: TxInfo -> Address -> [TxOut]
-getInputsTo info address = map txInInfoResolved (filter (\a -> (txOutAddress $ txInInfoResolved a) == address) (txInfoInputs info))
+getInputsTo info address = map txInInfoResolved (filter (\a -> txOutAddress (txInInfoResolved a) == address) (txInfoInputs info))
 
 {-# INLINABLE getOutputsTo #-}
 getOutputsTo :: TxInfo -> Address -> [TxOut]
