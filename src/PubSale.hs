@@ -256,8 +256,11 @@ datumsAreEqualSale info o o' b =
 onlySingleDatum :: TxInfo -> [TxOut] -> [TxOut] -> Bool
 onlySingleDatum info ins outs =
   let fullList = ins ++ outs
-      (_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
-  in result
+      --(_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
+      isTxOutTypeValid :: TxOut -> Bool
+      isTxOutTypeValid txOut = maybe False (\case SaleDatum _ -> True; _ -> False) (getDatum' info txOut)
+  in all isTxOutTypeValid fullList
+      && all (== head fullList) fullList
 
 data Saleing
 instance Scripts.ValidatorTypes Saleing where
