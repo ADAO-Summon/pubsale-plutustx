@@ -119,7 +119,7 @@ getOwnAddress ctx =
       hash = ownHash ctx
   in case ownInput of
     Just txoInfo -> txOutAddress (txInInfoResolved txoInfo)
-    Nothing      -> scriptHashAddress hash
+    Nothing      -> scriptHashAddress hash -- TODO: In this case, we probably want to stop the script execution by throwing an exception as this shouldn't happen. Better yet, use `fromJust`
 
 -- Return the tokenName of the validator.
 {-# INLINABLE ownTokenName #-}
