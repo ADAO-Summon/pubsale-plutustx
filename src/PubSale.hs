@@ -139,7 +139,7 @@ getInputsTo info address = map txInInfoResolved (filter (\a -> txOutAddress (txI
 
 {-# INLINABLE getOutputsTo #-}
 getOutputsTo :: TxInfo -> Address -> [TxOut]
-getOutputsTo info address = filter (\a -> (txOutAddress a) == address) (txInfoOutputs info)
+getOutputsTo info address = filter (\a -> txOutAddress a == address) (txInfoOutputs info)
 
 {-# INLINABLE getOutputsByAsset #-}
 getOutputsByAsset :: [TxOut] -> AssetClass -> [TxOut]
