@@ -3,9 +3,9 @@
 import           Prelude
 import           System.Environment
 
-import           Cardano.Api
-import           Cardano.Api.Shelley
-import           Codec.Serialise
+import           Cardano.Api hiding (Address)
+import           Cardano.Api.Shelley hiding (Address)
+import           Codec.Serialise hiding (encode)
 
 import qualified Cardano.Ledger.Alonzo.Data as Alonzo
 import qualified Plutus.V1.Ledger.Api as Plutus
@@ -21,19 +21,23 @@ import           PubSale
 import           Plutus.V1.Ledger.Value
 import           Plutus.V1.Ledger.Api
 import           Data.String                         (IsString (..))
-import           Data.Aeson
+import           Data.Aeson (encode)
 import           GHC.Num (encodeDoubleInteger)
 
-whitelist :: [AssetClass]
-whitelist = [AssetClass ("29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c6", "4d494e74"), AssetClass ("29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c6", "4d494e")]
+whitelistTest :: CurrencySymbol
+whitelistTest = CurrencySymbol ("5b01968867e13432afaa2f814e1d15e332d6cd0aa77e350972b0967d")
+
+whitelist :: [CurrencySymbol]
+whitelist = [whitelistTest]
+-- [AssetClass ("5b01968867e13432afaa2f814e1d15e332d6cd0aa77e350972b0967d", "4144414f476f7665726e616e6365546f6b656e")]
 
 daSale :: CurrencySymbol -> Sale
 daSale cur =
   Sale {
-    saleTokenRef = AssetClass ("126b8676446c84a5cd6e3259223b16a2314c5676b88ae1c1f8579a8f", "744d454c44"),
+    saleTokenRef = AssetClass ("9ffd99dd2354da45cf46ccb2097098dcfeaade7eb9fdbfe5aa9a52d2", "7453756d6d6f6e"),
     validToken = cur,
     salePrice = 50000,
-    maxTokens = 250000
+    maxTokens = 250000000000
   }
 
 main :: IO ()
@@ -65,19 +69,23 @@ main = do
 
       writePlutusScript' scriptnum "st.plutus" stScript stShortBs
 
+address :: PubSaleDatum
+address = RequestDatum (Address (PubKeyCredential "deadbeef") (Just $ (StakingHash (PubKeyCredential "beefbeef"))))
+
 writePlutusScript' :: Integer -> FilePath -> PlutusScript PlutusScriptV1 -> SBS.ShortByteString -> IO ()
 writePlutusScript' scriptnum filename scriptSerial scriptSBS =
-  do
-  case Plutus.defaultCostModelParams of
-        Just m ->
-          let Alonzo.Data pData = toAlonzoData (ScriptDataNumber scriptnum)
-              (logout, e) = Plutus.evaluateScriptCounting Plutus.Verbose m scriptSBS [pData]
-          in do print ("Log output" :: String) >> print logout
-                case e of
-                  Left evalErr -> print ("Eval Error" :: String) >> print evalErr
-                  Right exbudget -> print ("Ex Budget" :: String) >> print exbudget
-        Nothing -> error "defaultCostModelParams failed"
-  result <- writeFileTextEnvelope filename Nothing scriptSerial
-  case result of
-    Left err -> print $ displayError err
-    Right () -> return ()
+  do 
+    print $ "Datum value: " <> encode (scriptDataToJson ScriptDataJsonDetailedSchema $ fromPlutusData (Plutus.toData address))
+    case Plutus.defaultCostModelParams of
+          Just m ->
+            let Alonzo.Data pData = toAlonzoData (ScriptDataNumber scriptnum)
+                (logout, e) = Plutus.evaluateScriptCounting Plutus.Verbose m scriptSBS [pData]
+            in do print ("Log output" :: String) >> print logout
+                  case e of
+                    Left evalErr -> print ("Eval Error" :: String) >> print evalErr
+                    Right exbudget -> print ("Ex Budget" :: String) >> print exbudget
+          Nothing -> error "defaultCostModelParams failed"
+    result <- writeFileTextEnvelope filename Nothing scriptSerial
+    case result of
+      Left err -> print $ displayError err
+      Right () -> return ()

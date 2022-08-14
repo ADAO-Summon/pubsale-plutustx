@@ -104,12 +104,27 @@ getDatum' txInfo o = do
 
 {-# INLINABLE valueContainsAsset #-}
 valueContainsAsset :: [AssetClass] -> Value -> Bool
-valueContainsAsset as v = foldr (\a b -> 0 < (assetClassValueOf v a) || b) False as
+valueContainsAsset as v = foldr (\a b -> (0 < (assetClassValueOf v a) || b)) False as
+
+{-# INLINABLE valueContainsAsset' #-}
+valueContainsAsset' :: [AssetClass] -> Value -> Bool
+valueContainsAsset' as v = 0 < length (filter (\a -> 0 < (assetClassValueOf v a)) as)
 
 -- At least one 'ins' contains at least one of 'assets'.
 {-# INLINABLE whitelisted #-}
-whitelisted :: [TxInInfo] -> [AssetClass] -> Bool
-whitelisted ins assets = 0 < length (filter (valueContainsAsset assets) (map (txOutValue . txInInfoResolved) ins))
+whitelisted :: [TxOut] -> [AssetClass] -> Bool
+whitelisted ins assets = 0 < length (filter (valueContainsAsset' assets) (map txOutValue ins))
+
+-- whitelistedHelper' :: [TxOut] -> [AssetClass] -> Bool
+-- whitelisted' = any (== True) [vdNftPolicy validatorData `elem` symbols (txOutValue (txInInfoResolved i)) | i <- txInfoInputs txInfo]
+
+whitelistedValue' :: Value -> AssetClass -> Bool
+whitelistedValue' v a =
+  let (cs, tn) = unAssetClass a
+  in any (== True) [cs == cs' && tn == tn' | (cs', tn', i) <- (flattenValue v)]
+
+whitelistedValue :: Value -> [AssetClass] -> Bool
+whitelistedValue v as = any (== True) [whitelistedValue' v a | a <- as]
 
 -- Return address of the script being validated.
 {-# INLINABLE getOwnAddress #-}
@@ -235,8 +250,11 @@ getOutputsWithToken info symbol =
 {-# INLINABLE correctTokenName #-}
 correctTokenName :: (CurrencySymbol, TokenName, Integer) -> TxOut -> Bool
 correctTokenName (cs, tn, a) o =
-  let v = filter (\(cs', tn', a') -> cs' == cs && tn' == tn) (flattenValue (txOutValue o))
-  in length v == 1
+  let ac = addressCredential (txOutAddress o)
+  in case ac of
+    PubKeyCredential pkh -> False
+    ScriptCredential vh  -> case vh of
+      ValidatorHash h -> (tokenName (fromBuiltin h)) == tn
 
 {-# INLINABLE datumsAreEqualSale #-}
 datumsAreEqualSale :: TxInfo -> TxOut -> TxOut -> Bool -> (TxOut, Bool)
@@ -273,15 +291,15 @@ saleScript sale datum action ctx =
       ownAddress = getOwnAddress ctx
       ownInputs = getInputsTo info ownAddress
       ownOutputs = getOutputsTo info ownAddress
-      validAsset = AssetClass ((validToken sale), tn)
+      -- validAsset = AssetClass ((validToken sale), tn)
       requestInputs = getRequestOutputs info ownInputs
       saleInputs = getOutputsByAsset ownInputs (saleTokenRef sale)
       saleOutputs = getOutputsByAsset ownOutputs (saleTokenRef sale)
-      requestInputsWithST = getOutputsByAsset requestInputs validAsset
-      twoAssetRequestInputs = filter twoAssets requestInputsWithST
-      validRequestInputs = filter (\o -> (valueOf (txOutValue o) adaSymbol adaToken) < (divide (maxTokens sale) (salePrice sale))) twoAssetRequestInputs
-      requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
-      noValidityTokensLeave = length requestTokenOutputs == 0
+      -- requestInputsWithST = getOutputsByAsset requestInputs validAsset
+      -- twoAssetRequestInputs = filter twoAssets requestInputs
+      validRequestInputs = filter (\o -> (valueOf (txOutValue o) adaSymbol adaToken) < (divide (maxTokens sale) (salePrice sale))) requestInputs
+      -- requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
+      -- noValidityTokensLeave = length requestTokenOutputs == 0
       saleInValues = getValuesFromOuts saleInputs
       saleOutValues = getValuesFromOuts saleOutputs
       requestInValues = getValuesFromOuts validRequestInputs
@@ -293,7 +311,7 @@ saleScript sale datum action ctx =
       saleOutLovelace = valueOf saleOutTotal adaSymbol adaToken
       saleInToken = assetClassValueOf saleInTotal (saleTokenRef sale)
       saleOutToken = assetClassValueOf saleOutTotal (saleTokenRef sale)
-  in noValidityTokensLeave && case action of
+  in case action of
     Cancel  -> case datum of
       RequestDatum ad -> case (addressCredential ad) of
         PubKeyCredential pkh -> txSignedBy info pkh
@@ -313,12 +331,16 @@ saleScript sale datum action ctx =
       RequestDatum _  -> False
 
 {-# INLINABLE mkPolicy #-}
-mkPolicy :: [AssetClass] -> BuiltinData -> ScriptContext -> Bool
+mkPolicy :: [CurrencySymbol] -> BuiltinData -> ScriptContext -> Bool
 mkPolicy assets _ ctx =
   let info = scriptContextTxInfo ctx
       ownPolicy = ownCurrencySymbol ctx
       flattenedMint = flattenValue (txInfoMint info)
-      inputsWithAssets = whitelisted (txInfoInputs info) assets
+
+      -- checkAsset :: Bool
+      -- checkAsset = any (== True) [a `elem` symbols (txOutValue (txInInfoResolved i)) | i <- txInfoInputs info, a <- assets]
+
+      -- inputsWithAssets = any (== True) [whitelistedValue v assets | v <- (map (txOutValue . txInInfoResolved) (txInfoInputs info))] -- (map txInInfoResolved (txInfoInputs info)) assets
       inputsWithToken = getInputsWithToken info ownPolicy
       outputsWithToken = getOutputsWithToken info ownPolicy
       (cs, tn, a) = head flattenedMint
@@ -327,17 +349,16 @@ mkPolicy assets _ ctx =
     False -> case a == 1 of
       False -> False
       True  -> (length inputsWithToken == 0) &&
-               inputsWithAssets &&
-               (length outputsWithToken == 1) &&
+               -- checkAsset &&
                correctTokenName (head flattenedMint) (head outputsWithToken)
 
-policy :: [AssetClass] -> Scripts.MintingPolicy
+policy :: [CurrencySymbol] -> Scripts.MintingPolicy
 policy assets = mkMintingPolicyScript $
   $$(PlutusTx.compile [|| Scripts.wrapMintingPolicy . mkPolicy ||])
     `PlutusTx.applyCode`
     PlutusTx.liftCode assets
 
-curSymbol :: [AssetClass] -> CurrencySymbol
+curSymbol :: [CurrencySymbol] -> CurrencySymbol
 curSymbol assets = scriptCurrencySymbol $ policy assets
 
 saleValidatorInstance :: Sale -> Scripts.TypedValidator Saleing
