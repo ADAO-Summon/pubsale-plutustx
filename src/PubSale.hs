@@ -60,10 +60,15 @@ import           GHC.Generics         (Generic)
 import           Data.String          (IsString (..))
 import           Data.Aeson           (ToJSON, FromJSON)
 
+data SalePrice = TokensPerLovelace Integer | LovelacePerToken Integer
+  deriving (Show, Generic)
+
+PlutusTx.makeLift ''SalePrice
+
 data Sale = Sale
   { saleTokenRef :: AssetClass,
     validToken   :: CurrencySymbol,
-    salePrice    :: Integer,
+    salePrice    :: SalePrice,
     maxTokens    :: Integer
   }
   deriving (Show, Generic)
@@ -115,17 +120,6 @@ valueContainsAsset' as v = 0 < length (filter (\a -> 0 < (assetClassValueOf v a)
 whitelisted :: [TxOut] -> [AssetClass] -> Bool
 whitelisted ins assets = 0 < length (filter (valueContainsAsset' assets) (map txOutValue ins))
 
--- whitelistedHelper' :: [TxOut] -> [AssetClass] -> Bool
--- whitelisted' = any (== True) [vdNftPolicy validatorData `elem` symbols (txOutValue (txInInfoResolved i)) | i <- txInfoInputs txInfo]
-
-whitelistedValue' :: Value -> AssetClass -> Bool
-whitelistedValue' v a =
-  let (cs, tn) = unAssetClass a
-  in any (== True) [cs == cs' && tn == tn' | (cs', tn', i) <- (flattenValue v)]
-
-whitelistedValue :: Value -> [AssetClass] -> Bool
-whitelistedValue v as = any (== True) [whitelistedValue' v a | a <- as]
-
 -- Return address of the script being validated.
 {-# INLINABLE getOwnAddress #-}
 getOwnAddress :: ScriptContext -> Address
@@ -145,10 +139,6 @@ ownTokenName ctx =
   in case hash of
     ValidatorHash h -> tokenName (fromBuiltin h)
 
-{-# INLINABLE resolveAll #-}
-resolveAll :: [TxInInfo] -> [TxOut]
-resolveAll ins = map txInInfoResolved ins
-
 {-# INLINABLE getInputsTo #-}
 getInputsTo :: TxInfo -> Address -> [TxOut]
 getInputsTo info address = map txInInfoResolved (filter (\a -> (txOutAddress $ txInInfoResolved a) == address) (txInfoInputs info))
@@ -161,17 +151,40 @@ getOutputsTo info address = filter (\a -> (txOutAddress a) == address) (txInfoOu
 getOutputsByAsset :: [TxOut] -> AssetClass -> [TxOut]
 getOutputsByAsset outs asset = filter (\a -> 0 < (assetClassValueOf (txOutValue a) asset)) outs
 
-{-# INLINABLE datumIsRequest #-}
-datumIsRequest :: Maybe PubSaleDatum -> Bool
-datumIsRequest md = case md of
-  Just d  -> case d of
-    SaleDatum    _ -> False
-    RequestDatum _ -> True
+{-# INLINABLE requestsMatch #-}
+requestsMatch :: TxInfo -> TxOut -> Address -> Bool
+requestsMatch info i d = case (getDatum' info i) of
   Nothing -> False
+  Just pd -> case pd of
+    SaleDatum _    -> False
+    RequestDatum a -> a == d
 
-{-# INLINABLE getRequestOutputs #-}
-getRequestOutputs :: TxInfo -> [TxOut] -> [TxOut]
-getRequestOutputs info ins = filter (\i -> datumIsRequest (getDatum' info i)) ins
+{-# INLINABLE salesMatch #-}
+salesMatch :: TxInfo -> TxOut -> Address -> Bool
+salesMatch info i d = case (getDatum' info i) of
+  Nothing -> False
+  Just pd -> case pd of
+    SaleDatum a    -> a == d
+    RequestDatum _ -> False
+
+{-# INLINABLE outFromAddress #-}
+outFromAddress :: Address -> TxOut -> Bool
+outFromAddress a o = (txOutAddress o) == a
+
+-- sa is the script address
+-- a is the address of the datum being validated
+{-# INLINABLE getRequestInputs #-}
+getRequestInputs :: Address -> Address -> TxInfo -> [TxOut]
+getRequestInputs sa a info = [i | i <- filter (\i' -> requestsMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
+
+{-# INLINABLE getSaleInputs #-}
+getSaleInputs :: Address -> Address -> TxInfo -> [TxOut]
+getSaleInputs sa a info = [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
+
+{-# INLINABLE getSaleOutputs #-}
+getSaleOutputs :: Address -> Address -> TxInfo -> [TxOut]
+getSaleOutputs sa a info = [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (txInfoOutputs info))]
+
 
 {-# INLINABLE getValuesFromOuts #-}
 getValuesFromOuts :: [TxOut] -> [Value]
@@ -181,59 +194,10 @@ getValuesFromOuts outs = map txOutValue outs
 sumValues :: [Value] -> Value
 sumValues values = foldr (<>) mempty values
 
-{-# INLINABLE twoAssets #-}
-twoAssets :: TxOut -> Bool
-twoAssets out = length (flattenValue (txOutValue out)) == 2
-
-{-# valuesCompatible #-}
-valuesCompatible :: Integer -> AssetClass -> Value -> Value -> Bool
-valuesCompatible price saleToken requestValue paymentValue =
-  let requestSaleTokens = assetClassValueOf requestValue saleToken
-      requestAdaTokens = (valueOf requestValue adaSymbol adaToken) - 1000000
-      outSaleTokens = assetClassValueOf paymentValue saleToken
-      outAdaTokens = valueOf paymentValue adaSymbol adaToken
-  in (outAdaTokens - requestAdaTokens) <= (divide (outSaleTokens - requestSaleTokens) price)
-
-{-# INLINABLE lowerOutput #-}
-lowerOutput :: AssetClass -> TxOut -> TxOut -> TxOut
-lowerOutput saleToken o o' =
-  let origSaleTokens = assetClassValueOf (txOutValue o) saleToken
-      afterSaleTokens = assetClassValueOf (txOutValue o') saleToken
-  in case (origSaleTokens < afterSaleTokens) of
-    True  -> o
-    False -> o'
-
-{-# INLINABLE getBestOutput #-}
-getBestOutput :: Integer -> AssetClass -> TxOut -> [TxOut] -> Maybe TxOut
-getBestOutput price saleToken request outs =
-  let -- indexedOuts = zip [1..] outs
-      filteredOuts = filter (\o -> valuesCompatible price saleToken (txOutValue request) (txOutValue o)) outs
-      lowestViableOut = foldr (\o o' -> lowerOutput saleToken o o') (head filteredOuts) filteredOuts
-  in case (0 == length filteredOuts) of
-    True  -> Nothing
-    False -> Just lowestViableOut
-
-{-# INLINABLE requestMet #-}
-requestMet :: Integer -> AssetClass -> TxOut -> [TxOut] -> (Bool, [TxOut])
-requestMet price saleToken request outs =
-  let -- (bestIndex, bestOutput) = getBestOutput saleToken request outs
-      bestOutput = getBestOutput price saleToken request outs
-  in case bestOutput of
-    Nothing -> (False, [])
-    Just o  -> (True, (dropWhile (\o' -> o' == o) outs))
-
-{-# INLINABLE allRequestsMet #-}
-allRequestsMet :: Integer -> AssetClass -> [TxOut] -> [TxOut] -> Bool
-allRequestsMet price saleToken requests txOuts =
-  case (1 < (length requests)) of
-    False ->
-      let (b, _) = requestMet price saleToken (head requests) txOuts
-      in b
-    True  ->
-      let (b, newOuts) = requestMet price saleToken (head requests) txOuts
-      in case (0 < (length newOuts)) of
-        False -> False
-        True  -> b && allRequestsMet price saleToken (tail requests) newOuts
+-- Return the amount of sale tokens given to the user.
+{-# INLINABLE lockedToUser #-}
+lockedToUser :: Address -> TxInfo -> Value
+lockedToUser a info = sumValues [txOutValue o | o <- (filter (\o' -> a == (txOutAddress o')) (txInfoOutputs info))]
 
 {-# INLINABLE getInputsWithToken #-}
 getInputsWithToken :: TxInfo -> CurrencySymbol -> [TxOut]
@@ -256,28 +220,6 @@ correctTokenName (cs, tn, a) o =
     ScriptCredential vh  -> case vh of
       ValidatorHash h -> (tokenName (fromBuiltin h)) == tn
 
-{-# INLINABLE datumsAreEqualSale #-}
-datumsAreEqualSale :: TxInfo -> TxOut -> TxOut -> Bool -> (TxOut, Bool)
-datumsAreEqualSale info o o' b =
-  let md = getDatum' info o
-      md' = getDatum' info o'
-  in case md of
-    Just d -> case d of
-      SaleDatum p -> case md' of
-        Just d' -> case d' of
-          SaleDatum p' -> (o', p == p' && b)
-          _            -> (o', False)
-        _       -> (o', False)
-      _           -> (o', False)
-    _      -> (o', False)
-
-{-# INLINABLE onlySingleDatum #-}
-onlySingleDatum :: TxInfo -> [TxOut] -> [TxOut] -> Bool
-onlySingleDatum info ins outs =
-  let fullList = ins ++ outs
-      (_, result) = foldr (\a (o, b) -> datumsAreEqualSale info o a b) ((head fullList), True) fullList
-  in result
-
 data Saleing
 instance Scripts.ValidatorTypes Saleing where
     type instance RedeemerType Saleing = SaleRedeemer
@@ -291,39 +233,44 @@ saleScript sale datum action ctx =
       ownAddress = getOwnAddress ctx
       ownInputs = getInputsTo info ownAddress
       ownOutputs = getOutputsTo info ownAddress
-      -- validAsset = AssetClass ((validToken sale), tn)
-      requestInputs = getRequestOutputs info ownInputs
-      saleInputs = getOutputsByAsset ownInputs (saleTokenRef sale)
-      saleOutputs = getOutputsByAsset ownOutputs (saleTokenRef sale)
-      -- requestInputsWithST = getOutputsByAsset requestInputs validAsset
-      -- twoAssetRequestInputs = filter twoAssets requestInputs
-      validRequestInputs = filter (\o -> (valueOf (txOutValue o) adaSymbol adaToken) < (divide (maxTokens sale) (salePrice sale))) requestInputs
-      -- requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
-      -- noValidityTokensLeave = length requestTokenOutputs == 0
-      saleInValues = getValuesFromOuts saleInputs
-      saleOutValues = getValuesFromOuts saleOutputs
-      requestInValues = getValuesFromOuts validRequestInputs
-      requestInSum = sumValues requestInValues
-      saleInTotal = sumValues saleInValues
-      saleOutTotal = sumValues saleOutValues
-      requestLovelace = valueOf requestInSum adaSymbol adaToken
-      saleInLovelace = valueOf saleInTotal adaSymbol adaToken
-      saleOutLovelace = valueOf saleOutTotal adaSymbol adaToken
-      saleInToken = assetClassValueOf saleInTotal (saleTokenRef sale)
-      saleOutToken = assetClassValueOf saleOutTotal (saleTokenRef sale)
-  in case action of
+      validAsset = AssetClass ((validToken sale), tn)
+      requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
+      noValidityTokensLeave = length requestTokenOutputs == 0
+  in noValidityTokensLeave && case action of
     Cancel  -> case datum of
       RequestDatum ad -> case (addressCredential ad) of
         PubKeyCredential pkh -> txSignedBy info pkh
         _                    -> False
       SaleDatum _     -> False
-    Batch   ->
-      ((length saleInputs) == (length saleOutputs)) &&
-      onlySingleDatum info saleInputs saleOutputs &&
-      ((length requestInputs) == (length validRequestInputs)) &&
-      ((divide (saleOutToken - saleInToken) (salePrice sale)) <= (saleOutLovelace - saleInLovelace)) &&
-      (saleOutLovelace - saleInLovelace) <= requestLovelace &&
-      allRequestsMet (salePrice sale) (saleTokenRef sale) validRequestInputs (txInfoOutputs info)
+    Batch   -> case datum of
+      RequestDatum ad ->
+        let requestInputs = getRequestInputs ownAddress ad info
+            validRequestInputs = getOutputsByAsset requestInputs validAsset
+            requestInputsValues = getValuesFromOuts requestInputs
+            requestInTotal = sumValues requestInputsValues
+            requestInLovelace = valueOf requestInTotal adaSymbol adaToken
+            lockedToUser' = lockedToUser ad info
+            tokensToUser = assetClassValueOf lockedToUser' (saleTokenRef sale)
+        in ((length requestInputs) == (length validRequestInputs)) &&
+           (tokensToUser <= maxTokens sale) &&
+           case (salePrice sale) of
+             LovelacePerToken sp  -> (divide (requestInLovelace - 3000000) sp) <= tokensToUser
+             TokensPerLovelace sp -> (requestInLovelace - 3000000) <= (divide tokensToUser sp)
+      SaleDatum ad ->
+        let saleInputs = getSaleInputs ownAddress ad info
+            saleOutputs = getSaleOutputs ownAddress ad info
+            saleInValues = getValuesFromOuts saleInputs
+            saleOutValues = getValuesFromOuts saleOutputs
+            saleInTotal = sumValues saleInValues
+            saleOutTotal = sumValues saleOutValues
+            saleInLovelace = valueOf saleInTotal adaSymbol adaToken
+            saleOutLovelace = valueOf saleOutTotal adaSymbol adaToken
+            saleInToken = assetClassValueOf saleInTotal (saleTokenRef sale)
+            saleOutToken = assetClassValueOf saleOutTotal (saleTokenRef sale)
+        in ((length saleInputs) == (length saleOutputs)) &&
+           case (salePrice sale) of
+             LovelacePerToken  sp -> (saleOutToken - saleInToken) <= (divide (saleOutLovelace - saleInLovelace) sp)
+             TokensPerLovelace sp -> (divide (saleOutToken - saleInToken) sp) <= (saleOutLovelace - saleInLovelace)
     EndSale -> case datum of
       SaleDatum ad    -> case (addressCredential ad) of
         PubKeyCredential pkh -> txSignedBy info pkh
@@ -331,16 +278,12 @@ saleScript sale datum action ctx =
       RequestDatum _  -> False
 
 {-# INLINABLE mkPolicy #-}
-mkPolicy :: [CurrencySymbol] -> BuiltinData -> ScriptContext -> Bool
+mkPolicy :: [AssetClass] -> BuiltinData -> ScriptContext -> Bool
 mkPolicy assets _ ctx =
   let info = scriptContextTxInfo ctx
       ownPolicy = ownCurrencySymbol ctx
       flattenedMint = flattenValue (txInfoMint info)
-
-      -- checkAsset :: Bool
-      -- checkAsset = any (== True) [a `elem` symbols (txOutValue (txInInfoResolved i)) | i <- txInfoInputs info, a <- assets]
-
-      -- inputsWithAssets = any (== True) [whitelistedValue v assets | v <- (map (txOutValue . txInInfoResolved) (txInfoInputs info))] -- (map txInInfoResolved (txInfoInputs info)) assets
+      whitelist = whitelisted (map txInInfoResolved (txInfoInputs info)) assets
       inputsWithToken = getInputsWithToken info ownPolicy
       outputsWithToken = getOutputsWithToken info ownPolicy
       (cs, tn, a) = head flattenedMint
@@ -349,16 +292,16 @@ mkPolicy assets _ ctx =
     False -> case a == 1 of
       False -> False
       True  -> (length inputsWithToken == 0) &&
-               -- checkAsset &&
+               whitelist &&
                correctTokenName (head flattenedMint) (head outputsWithToken)
 
-policy :: [CurrencySymbol] -> Scripts.MintingPolicy
+policy :: [AssetClass] -> Scripts.MintingPolicy
 policy assets = mkMintingPolicyScript $
   $$(PlutusTx.compile [|| Scripts.wrapMintingPolicy . mkPolicy ||])
     `PlutusTx.applyCode`
     PlutusTx.liftCode assets
 
-curSymbol :: [CurrencySymbol] -> CurrencySymbol
+curSymbol :: [AssetClass] -> CurrencySymbol
 curSymbol assets = scriptCurrencySymbol $ policy assets
 
 saleValidatorInstance :: Sale -> Scripts.TypedValidator Saleing

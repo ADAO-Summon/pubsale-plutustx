@@ -24,19 +24,35 @@ import           Data.String                         (IsString (..))
 import           Data.Aeson (encode)
 import           GHC.Num (encodeDoubleInteger)
 
-whitelistTest :: CurrencySymbol
-whitelistTest = CurrencySymbol ("5b01968867e13432afaa2f814e1d15e332d6cd0aa77e350972b0967d")
+whiteListCur1 :: CurrencySymbol
+whiteListCur1 = fromString "5b01968867e13432afaa2f814e1d15e332d6cd0aa77e350972b0967d"
+whiteListCur2 :: CurrencySymbol
+whiteListCur2 = fromString "29d222ce763455e3d7a09a665ce554f00ac89d2e99a1a83d267170c6"
+whiteListCur3 :: CurrencySymbol
+whiteListCur3 = fromString "da8c30857834c6ae7203935b89278c532b3995245295456f993e1d24"
 
-whitelist :: [CurrencySymbol]
-whitelist = [whitelistTest]
--- [AssetClass ("5b01968867e13432afaa2f814e1d15e332d6cd0aa77e350972b0967d", "4144414f476f7665726e616e6365546f6b656e")]
+whiteListName1 :: TokenName
+whiteListName1 = fromString "ADAOGovernanceToken"
+whiteListName2 :: TokenName
+whiteListName2 = fromString "MIN"
+whiteListName3 :: TokenName
+whiteListName3 = fromString "LQ"
+
+whitelist :: [AssetClass]
+whitelist = [(assetClass whiteListCur1 whiteListName1), (assetClass whiteListCur2 whiteListName2), (assetClass whiteListCur3 whiteListName3)]
+
+saleRefToken :: CurrencySymbol
+saleRefToken = fromString "9ffd99dd2354da45cf46ccb2097098dcfeaade7eb9fdbfe5aa9a52d2"
+
+saleRefName :: TokenName
+saleRefName = fromString "tSummon"
 
 daSale :: CurrencySymbol -> Sale
 daSale cur =
   Sale {
-    saleTokenRef = AssetClass ("9ffd99dd2354da45cf46ccb2097098dcfeaade7eb9fdbfe5aa9a52d2", "7453756d6d6f6e"),
+    saleTokenRef = (assetClass saleRefToken saleRefName),
     validToken = cur,
-    salePrice = 50000,
+    salePrice = LovelacePerToken 50000,
     maxTokens = 250000000000
   }
 
