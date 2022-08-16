@@ -45,14 +45,14 @@ saleRefToken :: CurrencySymbol
 saleRefToken = fromString "9ffd99dd2354da45cf46ccb2097098dcfeaade7eb9fdbfe5aa9a52d2"
 
 saleRefName :: TokenName
-saleRefName = fromString "tSummon"
+saleRefName = fromString "t2Summon"
 
 daSale :: CurrencySymbol -> Sale
 daSale cur =
   Sale {
     saleTokenRef = (assetClass saleRefToken saleRefName),
     validToken = cur,
-    salePrice = LovelacePerToken 50000,
+    salePrice = TokensPerLovelace 20,
     maxTokens = 250000000000
   }
 

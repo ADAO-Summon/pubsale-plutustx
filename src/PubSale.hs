@@ -287,8 +287,8 @@ mkPolicy assets _ ctx =
       inputsWithToken = getInputsWithToken info ownPolicy
       outputsWithToken = getOutputsWithToken info ownPolicy
       (cs, tn, a) = head flattenedMint
-  in length flattenedMint == 1 && case a == -1 of
-    True  -> True
+  in length flattenedMint == 1 && case a < 0 of
+    True  -> length outputsWithToken == 0
     False -> case a == 1 of
       False -> False
       True  -> (length inputsWithToken == 0) &&
