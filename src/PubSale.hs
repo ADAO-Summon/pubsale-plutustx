@@ -87,15 +87,15 @@ data SaleRedeemer
     Cancel
   |
     Batch
-  |
-    EndSale
+  -- |
+    -- EndSale
   deriving (Show, Generic)
 
 PlutusTx.makeIsDataIndexed
   ''SaleRedeemer
   [ ('Cancel, 0)
   , ('Batch, 1)
-  , ('EndSale, 2)
+  -- , ('EndSale, 2)
   ]
 
 PlutusTx.makeLift ''SaleRedeemer
@@ -171,19 +171,37 @@ salesMatch info i d = case (getDatum' info i) of
 outFromAddress :: Address -> TxOut -> Bool
 outFromAddress a o = (txOutAddress o) == a
 
+{-# INLINABLE outFromAddressMatchingRequest #-}
+outFromAddressMatchingRequest :: TxInfo -> Address -> Address -> TxOut -> Bool
+outFromAddressMatchingRequest info sa a o =
+  (txOutAddress o) == sa && case (getDatum' info o) of
+    Nothing -> False
+    Just pd -> case pd of
+      SaleDatum _    -> False
+      RequestDatum d -> a == d
+
+{-# INLINABLE outFromAddressMatchingSale #-}
+outFromAddressMatchingSale :: TxInfo -> Address -> Address -> TxOut -> Bool
+outFromAddressMatchingSale info sa a o =
+  (txOutAddress o) == sa && case (getDatum' info o) of
+    Nothing -> False
+    Just pd -> case pd of
+      SaleDatum d    -> a == d
+      RequestDatum _ -> False
+
 -- sa is the script address
 -- a is the address of the datum being validated
 {-# INLINABLE getRequestInputs #-}
 getRequestInputs :: Address -> Address -> TxInfo -> [TxOut]
-getRequestInputs sa a info = [i | i <- filter (\i' -> requestsMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
+getRequestInputs sa a info = filter (outFromAddressMatchingRequest info sa a) (map txInInfoResolved (txInfoInputs info)) -- filter (\i' -> requestsMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
 
 {-# INLINABLE getSaleInputs #-}
 getSaleInputs :: Address -> Address -> TxInfo -> [TxOut]
-getSaleInputs sa a info = [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
+getSaleInputs sa a info = filter (outFromAddressMatchingSale info sa a) (map txInInfoResolved (txInfoInputs info)) -- [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (map txInInfoResolved (txInfoInputs info)))]
 
 {-# INLINABLE getSaleOutputs #-}
 getSaleOutputs :: Address -> Address -> TxInfo -> [TxOut]
-getSaleOutputs sa a info = [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (txInfoOutputs info))]
+getSaleOutputs sa a info = filter (outFromAddressMatchingSale info sa a) (txInfoOutputs info) -- [i | i <- filter (\i' -> salesMatch info i' a) (filter (outFromAddress sa) (txInfoOutputs info))]
 
 
 {-# INLINABLE getValuesFromOuts #-}
@@ -229,53 +247,58 @@ instance Scripts.ValidatorTypes Saleing where
 saleScript :: Sale -> PubSaleDatum -> SaleRedeemer -> ScriptContext -> Bool
 saleScript sale datum action ctx =
   let info = scriptContextTxInfo ctx
-      tn = ownTokenName ctx
+      -- tn = ownTokenName ctx
       ownAddress = getOwnAddress ctx
-      ownInputs = getInputsTo info ownAddress
-      ownOutputs = getOutputsTo info ownAddress
-      validAsset = AssetClass ((validToken sale), tn)
-      requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
-      noValidityTokensLeave = length requestTokenOutputs == 0
-  in noValidityTokensLeave && case action of
+      -- ownInputs = getInputsTo info ownAddress
+      -- ownOutputs = getOutputsTo info ownAddress
+      --validAsset = AssetClass ((validToken sale), tn)
+      -- requestTokenOutputs = getOutputsByAsset (txInfoOutputs info) validAsset
+      -- noValidityTokensLeave = length requestTokenOutputs == 0
+  -- in noValidityTokensLeave && 
+  in case action of
     Cancel  -> case datum of
       RequestDatum ad -> case (addressCredential ad) of
         PubKeyCredential pkh -> txSignedBy info pkh
         _                    -> False
-      SaleDatum _     -> False
+      SaleDatum ad    -> case (addressCredential ad) of
+        PubKeyCredential pkh -> txSignedBy info pkh
+        _                    -> False
     Batch   -> case datum of
       RequestDatum ad ->
         let requestInputs = getRequestInputs ownAddress ad info
-            validRequestInputs = getOutputsByAsset requestInputs validAsset
-            requestInputsValues = getValuesFromOuts requestInputs
-            requestInTotal = sumValues requestInputsValues
+            -- validRequestInputs = getOutputsByAsset requestInputs validAsset
+            requestInTotal = sumValues (getValuesFromOuts requestInputs)
+            -- requestInTotal = sumValues requestInputsValues
             requestInLovelace = valueOf requestInTotal adaSymbol adaToken
             lockedToUser' = lockedToUser ad info
             tokensToUser = assetClassValueOf lockedToUser' (saleTokenRef sale)
-        in ((length requestInputs) == (length validRequestInputs)) &&
+        in -- ((length requestInputs) == (length validRequestInputs)) &&
            (tokensToUser <= maxTokens sale) &&
            case (salePrice sale) of
-             LovelacePerToken sp  -> (divide (requestInLovelace - 3000000) sp) <= tokensToUser
-             TokensPerLovelace sp -> (requestInLovelace - 3000000) <= (divide tokensToUser sp)
+             LovelacePerToken sp  -> (divide (requestInLovelace - ((length requestInputs) * 3500000)) sp) <= tokensToUser
+             TokensPerLovelace sp -> (requestInLovelace - ((length requestInputs) * 3500000)) <= (divide tokensToUser sp)
       SaleDatum ad ->
         let saleInputs = getSaleInputs ownAddress ad info
             saleOutputs = getSaleOutputs ownAddress ad info
-            saleInValues = getValuesFromOuts saleInputs
-            saleOutValues = getValuesFromOuts saleOutputs
-            saleInTotal = sumValues saleInValues
-            saleOutTotal = sumValues saleOutValues
+            saleInTotal = sumValues (getValuesFromOuts saleInputs)
+            saleOutTotal = sumValues (getValuesFromOuts saleOutputs)
+            -- We could force that the sale is only a single UTxO in validation, but this would limit the amount of 
+            -- saleInTotal = sumValues saleInValues
+            -- saleOutTotal = sumValues saleOutValues
             saleInLovelace = valueOf saleInTotal adaSymbol adaToken
             saleOutLovelace = valueOf saleOutTotal adaSymbol adaToken
             saleInToken = assetClassValueOf saleInTotal (saleTokenRef sale)
             saleOutToken = assetClassValueOf saleOutTotal (saleTokenRef sale)
-        in ((length saleInputs) == (length saleOutputs)) &&
+            saleTokenDelta = saleInToken - saleOutToken
+        in (0 <= saleTokenDelta) &&
            case (salePrice sale) of
-             LovelacePerToken  sp -> (saleOutToken - saleInToken) <= (divide (saleOutLovelace - saleInLovelace) sp)
-             TokensPerLovelace sp -> (divide (saleOutToken - saleInToken) sp) <= (saleOutLovelace - saleInLovelace)
-    EndSale -> case datum of
+             LovelacePerToken  sp -> saleTokenDelta <= (divide (saleOutLovelace - saleInLovelace) sp)
+             TokensPerLovelace sp -> (divide saleTokenDelta sp) <= (saleOutLovelace - saleInLovelace)
+    {- EndSale -> case datum of
       SaleDatum ad    -> case (addressCredential ad) of
         PubKeyCredential pkh -> txSignedBy info pkh
         _                    -> False
-      RequestDatum _  -> False
+      RequestDatum _  -> False -}
 
 {-# INLINABLE mkPolicy #-}
 mkPolicy :: [AssetClass] -> BuiltinData -> ScriptContext -> Bool

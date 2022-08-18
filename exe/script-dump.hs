@@ -43,9 +43,11 @@ whitelist = [(assetClass whiteListCur1 whiteListName1), (assetClass whiteListCur
 
 saleRefToken :: CurrencySymbol
 saleRefToken = fromString "9ffd99dd2354da45cf46ccb2097098dcfeaade7eb9fdbfe5aa9a52d2"
+-- saleRefToken = fromString "718c383a22b0239d034a95e750fd09a5930bddcffc24bf5c566b1cf1" -- True SUMMON
 
 saleRefName :: TokenName
 saleRefName = fromString "t2Summon"
+-- saleRefName = fromString "SUMMON"
 
 daSale :: CurrencySymbol -> Sale
 daSale cur =
